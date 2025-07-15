@@ -62,7 +62,13 @@ class CallbackModule(CallbackBase):
     )
 
     def make_priority(cls, facility, level):
-        return (cls.syslog_facilities[facility] << 3) | cls.syslog_levels[level]
+        # Handle facility - use directly if numeric, lookup if string
+        facility_code = facility if isinstance(facility, int) else cls.syslog_facilities[facility]
+        
+        # Handle level - use directly if numeric, lookup if string
+        level_code = level if isinstance(level, int) else cls.syslog_levels[level]
+        
+        return (facility_code << 3) | level_code
 
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = 'haha'
@@ -77,13 +83,13 @@ class CallbackModule(CallbackBase):
         self.config = self._load_config() 
         self.syslog_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.alert_levels=dict(
-            ok='LOG_INFO',
-            failures='LOG_ERR',
-            unreachable='LOG_EMERG',
-            changed='LOG_INFO',
-            skipped='LOG_NOTICE',
-            rescued='LOG_NOTICE',
-            ignored='LOG_NOTICE'
+            ok=self.syslog_levels.LOG_INFO,
+            failures=self.syslog_levels.LOG_ERR,
+            unreachable=self.syslog_levels.LOG_EMERG,
+            changed=self.syslog_levels.LOG_INFO,
+            skipped=self.syslog_levels.LOG_NOTICE,
+            rescued=self.syslog_levels.LOG_NOTICE,
+            ignored=self.syslog_levels.LOG_NOTICE
             )
 
     def _load_config(self):
@@ -123,9 +129,9 @@ class CallbackModule(CallbackBase):
                         level=self.alert_levels[msgk]
                         self._send_to_syslog(level, msg)
         except Exception as e:
-            self._send_to_syslog('LOG_ALERT', e.__class__.__name__)
+            self._send_to_syslog(self.syslog_levels.LOG_ALERT, e.__class__.__name__)
             for arg in e.args:
-                self._send_to_syslog('LOG_ALERT', arg)
+                self._send_to_syslog(self.syslog_levels.LOG_ALERT, arg)
 
     def _send_to_syslog_RFC5424(self, level, message):
         facility='user'
