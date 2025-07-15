@@ -31,6 +31,18 @@ export ANSIBLE_SYSLOG_DEBUG=true
    callback_plugins = /path/to/callback/plugins
    callbacks_enabled = syslog
    ```
+   
+   **OR** enable it on the command line:
+   ```bash
+   ansible-playbook -i inventory playbook.yml --extra-vars="ANSIBLE_STDOUT_CALLBACK=default" -e "ANSIBLE_CALLBACKS_ENABLED=syslog"
+   ```
+   
+   **OR** use environment variable:
+   ```bash
+   export ANSIBLE_CALLBACKS_ENABLED=syslog
+   ansible-playbook -i inventory playbook.yml
+   ```
+
 3. Run your Ansible playbooks normally
 
 The callback will automatically send playbook execution statistics to your configured syslog server.
