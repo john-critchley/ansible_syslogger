@@ -9,14 +9,47 @@ import time
 import datetime
 
 DOCUMENTATION = '''
-name: haha
-callback_type: haha
+name: syslog
+callback_type: notification
 requirements:
     - enable in configuration
-short_description: Funny
+short_description: Sends play events to syslog
 version_added: "2.0"  # for collections, use the collection version, not the Ansible version
 description:
-    - Funny haha
+    - This callback plugin sends Ansible playbook execution results to a syslog server
+    - Supports both RFC3164 and RFC5424 syslog message formats
+    - Configurable via environment variables for syslog server, port, facility, and tag
+options:
+  syslog_host:
+    description: Syslog server hostname or IP address
+    default: localhost
+    env:
+      - name: ANSIBLE_SYSLOG_HOST
+    type: str
+  syslog_port:
+    description: Syslog server port
+    default: 514
+    env:
+      - name: ANSIBLE_SYSLOG_PORT
+    type: int
+  syslog_facility:
+    description: Syslog facility to use
+    default: user
+    env:
+      - name: ANSIBLE_SYSLOG_FACILITY
+    type: str
+  tag:
+    description: Tag to include in syslog messages
+    default: ansible
+    env:
+      - name: ANSIBLE_SYSLOG_TAG
+    type: str
+  debug:
+    description: Enable debug mode
+    default: false
+    env:
+      - name: ANSIBLE_SYSLOG_DEBUG
+    type: bool
 '''
 
 class CallbackModule(CallbackBase):
@@ -71,11 +104,11 @@ class CallbackModule(CallbackBase):
         return (facility_code << 3) | level_code
 
     CALLBACK_VERSION = 2.0
-    CALLBACK_TYPE = 'haha'
-    CALLBACK_NAME = 'haha'
+    CALLBACK_TYPE = 'notification'
+    CALLBACK_NAME = 'syslog'
 
     # only needed if you ship it and don't want to enable by default
-    CALLBACK_NEEDS_ENABLED = False
+    CALLBACK_NEEDS_ENABLED = True
     
     def __init__(self):
         # make sure the expected objects are present, calling the base's __init__
