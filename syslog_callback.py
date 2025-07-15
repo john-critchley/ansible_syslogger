@@ -150,21 +150,50 @@ class CallbackModule(CallbackBase):
         return result
 
     def v2_playbook_on_stats(self, stats):
+        """Called at the end with playbook statistics summary"""
         try:
+            # Send summary start message
+            self._send_to_syslog(self.syslog_levels.LOG_INFO, f'{self._playbook_name} playbook_summary status=started')
+            
             cl=self.__class__
             hosts = sorted(stats.processed.keys())
             if not hosts: #Needed?
+                self._send_to_syslog(self.syslog_levels.LOG_WARNING, f'{self._playbook_name} playbook_summary status=no_hosts')
                 return
+                
+            # Send per-host summary statistics
             for host in hosts:
-                for msgk, msgv in stats.summarize(host).items():
-                    if msgv:
-                        msg=f'{self._playbook_name} {host} {msgv} {msgk}'
-                        level=self.alert_levels[msgk]
-                        self._send_to_syslog(level, msg)
+                host_stats = stats.summarize(host)
+                total_tasks = sum(host_stats.values())
+                
+                # Create summary message with all stats
+                summary_parts = []
+                for msgk, msgv in host_stats.items():
+                    if msgv > 0:  # Only include non-zero counts
+                        summary_parts.append(f'{msgk}={msgv}')
+                
+                summary_str = ' '.join(summary_parts) if summary_parts else 'no_tasks'
+                msg = f'{self._playbook_name} playbook_summary host={host} total_tasks={total_tasks} {summary_str}'
+                
+                # Use appropriate log level based on failures/unreachable
+                if host_stats.get('failures', 0) > 0:
+                    level = self.syslog_levels.LOG_ERR
+                elif host_stats.get('unreachable', 0) > 0:
+                    level = self.syslog_levels.LOG_EMERG
+                elif host_stats.get('changed', 0) > 0:
+                    level = self.syslog_levels.LOG_INFO
+                else:
+                    level = self.syslog_levels.LOG_INFO
+                    
+                self._send_to_syslog(level, msg)
+                
+            # Send summary completion message
+            self._send_to_syslog(self.syslog_levels.LOG_INFO, f'{self._playbook_name} playbook_summary status=completed')
+            
         except Exception as e:
-            self._send_to_syslog(self.syslog_levels.LOG_ALERT, e.__class__.__name__)
+            self._send_to_syslog(self.syslog_levels.LOG_ALERT, f'{self._playbook_name} playbook_summary_error error="{e.__class__.__name__}"')
             for arg in e.args:
-                self._send_to_syslog(self.syslog_levels.LOG_ALERT, arg)
+                self._send_to_syslog(self.syslog_levels.LOG_ALERT, f'{self._playbook_name} playbook_summary_error detail="{arg}"')
 
     def _send_to_syslog_RFC5424(self, level, message):
         facility='user'
@@ -195,8 +224,10 @@ class CallbackModule(CallbackBase):
         self._send_to_syslog_RFC3164(*args, **kwargs)
 
     def v2_playbook_on_start(self, playbook):
+        """Called when playbook execution starts"""
         self._playbook_name = os.path.basename(playbook._file_name)
-
+        msg = f'{self._playbook_name} playbook status=started'
+        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
 
     def __del__(self):
         """
@@ -204,6 +235,91 @@ class CallbackModule(CallbackBase):
         """
         if self.syslog_socket:
             self.syslog_socket.close()
+
+    def v2_runner_on_ok(self, result):
+        """Called when a task succeeds"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        msg = f'{self._playbook_name} {host} task="{task_name}" status=ok'
+        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+
+    def v2_runner_on_changed(self, result):
+        """Called when a task makes changes"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        msg = f'{self._playbook_name} {host} task="{task_name}" status=changed'
+        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+
+    def v2_runner_on_failed(self, result, ignore_errors=False):
+        """Called when a task fails"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        error_msg = result._result.get('msg', 'Unknown error')
+        msg = f'{self._playbook_name} {host} task="{task_name}" status=failed error="{error_msg}"'
+        level = self.syslog_levels.LOG_NOTICE if ignore_errors else self.syslog_levels.LOG_ERR
+        self._send_to_syslog(level, msg)
+
+    def v2_runner_on_unreachable(self, result):
+        """Called when a host is unreachable"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        error_msg = result._result.get('msg', 'Host unreachable')
+        msg = f'{self._playbook_name} {host} task="{task_name}" status=unreachable error="{error_msg}"'
+        self._send_to_syslog(self.syslog_levels.LOG_EMERG, msg)
+
+    def v2_runner_on_skipped(self, result):
+        """Called when a task is skipped"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        reason = result._result.get('skip_reason', 'Condition not met')
+        msg = f'{self._playbook_name} {host} task="{task_name}" status=skipped reason="{reason}"'
+        self._send_to_syslog(self.syslog_levels.LOG_NOTICE, msg)
+
+    def v2_runner_retry(self, result):
+        """Called when a task is retried"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        retry_count = result._result.get('retries', 0) + 1
+        msg = f'{self._playbook_name} {host} task="{task_name}" status=retry attempt={retry_count}'
+        self._send_to_syslog(self.syslog_levels.LOG_WARNING, msg)
+
+    def v2_runner_item_on_ok(self, result):
+        """Called when a task item succeeds (for loops)"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        item = result._result.get('item', 'N/A')
+        msg = f'{self._playbook_name} {host} task="{task_name}" item="{item}" status=ok'
+        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+
+    def v2_runner_item_on_failed(self, result):
+        """Called when a task item fails (for loops)"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        item = result._result.get('item', 'N/A')
+        error_msg = result._result.get('msg', 'Unknown error')
+        msg = f'{self._playbook_name} {host} task="{task_name}" item="{item}" status=failed error="{error_msg}"'
+        self._send_to_syslog(self.syslog_levels.LOG_ERR, msg)
+
+    def v2_runner_item_on_skipped(self, result):
+        """Called when a task item is skipped (for loops)"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        item = result._result.get('item', 'N/A')
+        reason = result._result.get('skip_reason', 'Condition not met')
+        msg = f'{self._playbook_name} {host} task="{task_name}" item="{item}" status=skipped reason="{reason}"'
+        self._send_to_syslog(self.syslog_levels.LOG_NOTICE, msg)
+
+    def v2_playbook_on_play_start(self, play):
+        """Called when a play starts"""
+        play_name = play.get_name() or 'Unnamed play'
+        msg = f'{self._playbook_name} play="{play_name}" status=started'
+        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+
+    def v2_playbook_on_task_start(self, task, is_conditional):
+        """Called when a task starts"""
+        task_name = task.get_name()
+        msg = f'{self._playbook_name} task="{task_name}" status=started'
+        self._send_to_syslog(self.syslog_levels.LOG_DEBUG, msg)
 
 if __name__=='__main__':
     
