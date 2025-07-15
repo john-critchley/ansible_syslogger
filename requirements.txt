@@ -1,0 +1,9 @@
+# Requirements for running the syslog callback module
+# Install with: pip install -r requirements.txt
+
+# Core dependency for Box data structure
+python-box>=6.0.0
+
+# Note: The ansible package is normally required for the CallbackBase class,
+# but for testing purposes, you can comment it out and mock the base class
+# ansible>=2.9.0
