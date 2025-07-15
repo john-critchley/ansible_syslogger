@@ -173,7 +173,7 @@ class CallbackModule(CallbackBase):
                         summary_parts.append(f'{msgk}={msgv}')
                 
                 summary_str = ' '.join(summary_parts) if summary_parts else 'no_tasks'
-                msg = f'{self._playbook_name} playbook_summary host={host} total_tasks={total_tasks} {summary_str}'
+                msg = f'{self._playbook_name} playbook_summary target_host={host} total_tasks={total_tasks} {summary_str}'
                 
                 # Use appropriate log level based on failures/unreachable
                 if host_stats.get('failures', 0) > 0:
@@ -240,14 +240,14 @@ class CallbackModule(CallbackBase):
         """Called when a task succeeds"""
         host = result._host.get_name()
         task_name = result._task.get_name()
-        msg = f'{self._playbook_name} {host} task="{task_name}" status=ok'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=ok'
         self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
 
     def v2_runner_on_changed(self, result):
         """Called when a task makes changes"""
         host = result._host.get_name()
         task_name = result._task.get_name()
-        msg = f'{self._playbook_name} {host} task="{task_name}" status=changed'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=changed'
         self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
@@ -255,7 +255,7 @@ class CallbackModule(CallbackBase):
         host = result._host.get_name()
         task_name = result._task.get_name()
         error_msg = result._result.get('msg', 'Unknown error')
-        msg = f'{self._playbook_name} {host} task="{task_name}" status=failed error="{error_msg}"'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=failed error="{error_msg}"'
         level = self.syslog_levels.LOG_NOTICE if ignore_errors else self.syslog_levels.LOG_ERR
         self._send_to_syslog(level, msg)
 
@@ -264,7 +264,7 @@ class CallbackModule(CallbackBase):
         host = result._host.get_name()
         task_name = result._task.get_name()
         error_msg = result._result.get('msg', 'Host unreachable')
-        msg = f'{self._playbook_name} {host} task="{task_name}" status=unreachable error="{error_msg}"'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=unreachable error="{error_msg}"'
         self._send_to_syslog(self.syslog_levels.LOG_EMERG, msg)
 
     def v2_runner_on_skipped(self, result):
@@ -272,7 +272,7 @@ class CallbackModule(CallbackBase):
         host = result._host.get_name()
         task_name = result._task.get_name()
         reason = result._result.get('skip_reason', 'Condition not met')
-        msg = f'{self._playbook_name} {host} task="{task_name}" status=skipped reason="{reason}"'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=skipped reason="{reason}"'
         self._send_to_syslog(self.syslog_levels.LOG_NOTICE, msg)
 
     def v2_runner_retry(self, result):
@@ -280,7 +280,7 @@ class CallbackModule(CallbackBase):
         host = result._host.get_name()
         task_name = result._task.get_name()
         retry_count = result._result.get('retries', 0) + 1
-        msg = f'{self._playbook_name} {host} task="{task_name}" status=retry attempt={retry_count}'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=retry attempt={retry_count}'
         self._send_to_syslog(self.syslog_levels.LOG_WARNING, msg)
 
     def v2_runner_item_on_ok(self, result):
@@ -288,7 +288,7 @@ class CallbackModule(CallbackBase):
         host = result._host.get_name()
         task_name = result._task.get_name()
         item = result._result.get('item', 'N/A')
-        msg = f'{self._playbook_name} {host} task="{task_name}" item="{item}" status=ok'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" item="{item}" status=ok'
         self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
 
     def v2_runner_item_on_failed(self, result):
@@ -297,7 +297,7 @@ class CallbackModule(CallbackBase):
         task_name = result._task.get_name()
         item = result._result.get('item', 'N/A')
         error_msg = result._result.get('msg', 'Unknown error')
-        msg = f'{self._playbook_name} {host} task="{task_name}" item="{item}" status=failed error="{error_msg}"'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" item="{item}" status=failed error="{error_msg}"'
         self._send_to_syslog(self.syslog_levels.LOG_ERR, msg)
 
     def v2_runner_item_on_skipped(self, result):
@@ -306,7 +306,7 @@ class CallbackModule(CallbackBase):
         task_name = result._task.get_name()
         item = result._result.get('item', 'N/A')
         reason = result._result.get('skip_reason', 'Condition not met')
-        msg = f'{self._playbook_name} {host} task="{task_name}" item="{item}" status=skipped reason="{reason}"'
+        msg = f'{self._playbook_name} target_host={host} task="{task_name}" item="{item}" status=skipped reason="{reason}"'
         self._send_to_syslog(self.syslog_levels.LOG_NOTICE, msg)
 
     def v2_playbook_on_play_start(self, play):
