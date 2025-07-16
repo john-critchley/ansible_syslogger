@@ -1,5 +1,8 @@
-from __future__ import (absolute_import, division, print_function)
-__metaclass__ = type
+import sys
+
+if sys.version_info[0] < 3:
+    raise RuntimeError("This callback plugin requires Python 3.")
+
 from ansible.plugins.callback import CallbackBase
 import socket
 import os
@@ -14,11 +17,24 @@ callback_type: notification
 requirements:
     - enable in configuration
 short_description: Sends play events to syslog
-version_added: "2.0"  # for collections, use the collection version, not the Ansible version
+version_added: "2.0"  # for collections, use         # Event-specific data mapping: (result_key, format_function)
+        event_data_mapping = {
+            'failed': ('msg', lambda value: f'error="{value}"'),
+            'unreachable': ('msg', lambda value: f'error="{value}"'),
+            'skipped': ('skip_reason', lambda value: f'reason="{value}"'),
+            'retry': ('retries', lambda value: f'attempt={value + 1}')
+        }
+        
+        # Add specific data based on event type
+        if event_type in event_data_mapping:
+            result_key, format_func = event_data_mapping[event_type]
+            value = result._result[result_key]
+            msg_parts.append(format_func(value))n version, not the Ansible version
 description:
     - This callback plugin sends Ansible playbook execution results to a syslog server
     - Supports both RFC3164 and RFC5424 syslog message formats
     - Configurable via environment variables for syslog server, port, facility, and tag
+    - Each event type has configurable log levels for fine-grained control
 options:
   syslog_host:
     description: Syslog server hostname or IP address
@@ -50,9 +66,105 @@ options:
     env:
       - name: ANSIBLE_SYSLOG_DEBUG
     type: bool
+  level_playbook_start:
+    description: Log level for playbook start events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_PLAYBOOK_START
+    type: str
+  level_play_start:
+    description: Log level for play start events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_PLAY_START
+    type: str
+  level_task_start:
+    description: Log level for task start events
+    default: LOG_DEBUG
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_TASK_START
+    type: str
+  level_ok:
+    description: Log level for successful task events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_OK
+    type: str
+  level_changed:
+    description: Log level for task change events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_CHANGED
+    type: str
+  level_failed:
+    description: Log level for task failure events
+    default: LOG_ERR
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_FAILED
+    type: str
+  level_unreachable:
+    description: Log level for unreachable host events
+    default: LOG_EMERG
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_UNREACHABLE
+    type: str
+  level_skipped:
+    description: Log level for skipped task events
+    default: LOG_NOTICE
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_SKIPPED
+    type: str
+  level_retry:
+    description: Log level for task retry events
+    default: LOG_WARNING
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_RETRY
+    type: str
+  level_item_ok:
+    description: Log level for successful loop item events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_ITEM_OK
+    type: str
+  level_item_failed:
+    description: Log level for failed loop item events
+    default: LOG_ERR
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_ITEM_FAILED
+    type: str
+  level_item_skipped:
+    description: Log level for skipped loop item events
+    default: LOG_NOTICE
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_ITEM_SKIPPED
+    type: str
+  level_summary_start:
+    description: Log level for summary start events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_SUMMARY_START
+    type: str
+  level_summary_host:
+    description: Log level for per-host summary events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_SUMMARY_HOST
+    type: str
+  level_summary_complete:
+    description: Log level for summary completion events
+    default: LOG_INFO
+    env:
+      - name: ANSIBLE_SYSLOG_LEVEL_SUMMARY_COMPLETE
+    type: str
 '''
 
 class CallbackModule(CallbackBase):
+    
+    # Constants using Box values
+    DEFAULT_FACILITY = 'user'
+    DEFAULT_TAG = 'ansible'
+    DEFAULT_HOST = 'localhost'
+    DEFAULT_PORT = 514
 
     syslog_levels = box.Box(
         LOG_EMERG=0,      # Emergency: system is unusable
@@ -63,6 +175,25 @@ class CallbackModule(CallbackBase):
         LOG_NOTICE=5,     # Notice: normal but significant condition
         LOG_INFO=6,       # Informational: informational messages
         LOG_DEBUG=7       # Debug: debug-level messages
+    )
+
+    # Default log levels for each event type
+    level_defaults = box.Box(
+        playbook_start='LOG_INFO',
+        play_start='LOG_INFO', 
+        task_start='LOG_DEBUG',
+        ok='LOG_INFO',
+        changed='LOG_INFO',
+        failed='LOG_ERR',
+        unreachable='LOG_EMERG',
+        skipped='LOG_NOTICE',
+        retry='LOG_WARNING',
+        item_ok='LOG_INFO',
+        item_failed='LOG_ERR',
+        item_skipped='LOG_NOTICE',
+        summary_start='LOG_INFO',
+        summary_host='LOG_INFO',
+        summary_complete='LOG_INFO'
     )
 
     # Syslog facility codes from RFC 5424
@@ -94,6 +225,7 @@ class CallbackModule(CallbackBase):
         local7=23         # local use 7
     )
 
+    @classmethod
     def make_priority(cls, facility, level):
         # Handle facility - use directly if numeric, lookup if string
         facility_code = facility if isinstance(facility, int) else cls.syslog_facilities[facility]
@@ -115,94 +247,83 @@ class CallbackModule(CallbackBase):
         super(CallbackModule, self).__init__()
         self.config = self._load_config() 
         self.syslog_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.alert_levels=dict(
-            ok=self.syslog_levels.LOG_INFO,
-            failures=self.syslog_levels.LOG_ERR,
-            unreachable=self.syslog_levels.LOG_EMERG,
-            changed=self.syslog_levels.LOG_INFO,
-            skipped=self.syslog_levels.LOG_NOTICE,
-            rescued=self.syslog_levels.LOG_NOTICE,
-            ignored=self.syslog_levels.LOG_NOTICE
-            )
 
     def _load_config(self):
         """Load configuration from environment variables"""
 
-        # Default configuration
-        defaults = dict(
-            syslog_host= 'localhost',
-            syslog_port= 514,
-            syslog_facility= 'user',
-            changed_behavior= 'normal',  # normal, expected, unexpected
-            tag= 'ansible',
-            debug= False
+        # Default configuration using class constants
+        defaults = box.Box(
+            syslog_host=self.DEFAULT_HOST,
+            syslog_port=self.DEFAULT_PORT,
+            syslog_facility=self.DEFAULT_FACILITY,
+            tag=self.DEFAULT_TAG,
+            debug=False
         )
 
-        # Get values from environment variables with defaults
-        result = box.Box()
-        result['syslog_host'] = os.environ.get('ANSIBLE_SYSLOG_HOST', defaults['syslog_host'])
-        result['syslog_port'] = int(os.environ.get('ANSIBLE_SYSLOG_PORT', defaults['syslog_port']))
-        result['syslog_facility'] = os.environ.get('ANSIBLE_SYSLOG_FACILITY', defaults['syslog_facility'])
-        result['changed_behavior'] = os.environ.get('ANSIBLE_SYSLOG_CHANGED_BEHAVIOR', defaults['changed_behavior'])
-        result['tag'] = os.environ.get('ANSIBLE_SYSLOG_TAG', defaults['tag'])
-        result['debug'] = os.environ.get('ANSIBLE_SYSLOG_DEBUG', '').lower() in ('true', '1', 'yes')
+        # Get basic config from environment variables with defaults
+        result = box.Box(
+            syslog_host=os.environ.get('ANSIBLE_SYSLOG_HOST', defaults.syslog_host),
+            syslog_port=int(os.environ.get('ANSIBLE_SYSLOG_PORT', defaults.syslog_port)),
+            syslog_facility=os.environ.get('ANSIBLE_SYSLOG_FACILITY', defaults.syslog_facility),
+            tag=os.environ.get('ANSIBLE_SYSLOG_TAG', defaults.tag),
+            debug=os.environ.get('ANSIBLE_SYSLOG_DEBUG', '').lower() in ('true', '1', 'yes')
+        )
+        
+        # Load event-specific log levels using comprehension
+        level_config = {
+            f'level_{event_type}': os.environ.get(f'ANSIBLE_SYSLOG_LEVEL_{event_type.upper()}', default_level)
+            for event_type, default_level in self.level_defaults.items()
+        }
+        result.update(level_config)
 
         return result
 
     def v2_playbook_on_stats(self, stats):
         """Called at the end with playbook statistics summary"""
-        try:
-            # Send summary start message
-            self._send_to_syslog(self.syslog_levels.LOG_INFO, f'{self._playbook_name} playbook_summary status=started')
+        # Send summary start message
+        level = self._get_log_level('summary_start')
+        self._send_to_syslog(level, f'{self._playbook_name} playbook_summary status=started')
+        
+        hosts = sorted(stats.processed.keys())
+        if not hosts:
+            self._send_to_syslog(self.syslog_levels.LOG_WARNING, f'{self._playbook_name} playbook_summary status=no_hosts')
+            return
             
-            cl=self.__class__
-            hosts = sorted(stats.processed.keys())
-            if not hosts: #Needed?
-                self._send_to_syslog(self.syslog_levels.LOG_WARNING, f'{self._playbook_name} playbook_summary status=no_hosts')
-                return
-                
-            # Send per-host summary statistics
-            for host in hosts:
-                host_stats = stats.summarize(host)
-                total_tasks = sum(host_stats.values())
-                
-                # Create summary message with all stats
-                summary_parts = []
-                for msgk, msgv in host_stats.items():
-                    if msgv > 0:  # Only include non-zero counts
-                        summary_parts.append(f'{msgk}={msgv}')
-                
-                summary_str = ' '.join(summary_parts) if summary_parts else 'no_tasks'
-                msg = f'{self._playbook_name} playbook_summary target_host={host} total_tasks={total_tasks} {summary_str}'
-                
-                # Use appropriate log level based on failures/unreachable
-                if host_stats.get('failures', 0) > 0:
-                    level = self.syslog_levels.LOG_ERR
-                elif host_stats.get('unreachable', 0) > 0:
-                    level = self.syslog_levels.LOG_EMERG
-                elif host_stats.get('changed', 0) > 0:
-                    level = self.syslog_levels.LOG_INFO
-                else:
-                    level = self.syslog_levels.LOG_INFO
-                    
-                self._send_to_syslog(level, msg)
-                
-            # Send summary completion message
-            self._send_to_syslog(self.syslog_levels.LOG_INFO, f'{self._playbook_name} playbook_summary status=completed')
+        # Send per-host summary statistics
+        for host in hosts:
+            host_stats = stats.summarize(host)
+            total_tasks = sum(host_stats.values())
             
-        except Exception as e:
-            self._send_to_syslog(self.syslog_levels.LOG_ALERT, f'{self._playbook_name} playbook_summary_error error="{e.__class__.__name__}"')
-            for arg in e.args:
-                self._send_to_syslog(self.syslog_levels.LOG_ALERT, f'{self._playbook_name} playbook_summary_error detail="{arg}"')
+            # Create summary message with all stats
+            summary_parts = []
+            for msgk, msgv in host_stats.items():
+                if msgv > 0:  # Only include non-zero counts
+                    summary_parts.append(f'{msgk}={msgv}')
+            
+            summary_str = ' '.join(summary_parts) if summary_parts else 'no_tasks'
+            msg = f'{self._playbook_name} playbook_summary target_host={host} total_tasks={total_tasks} {summary_str}'
+            
+            # Use appropriate log level based on failures/unreachable or configured level
+            if host_stats['failures'] > 0:
+                level = self.syslog_levels.LOG_ERR
+            elif host_stats['unreachable'] > 0:
+                level = self.syslog_levels.LOG_EMERG
+            else:
+                level = self._get_log_level('summary_host')
+                
+            self._send_to_syslog(level, msg)
+            
+        # Send summary completion message
+        level = self._get_log_level('summary_complete')
+        self._send_to_syslog(level, f'{self._playbook_name} playbook_summary status=completed')
 
     def _send_to_syslog_RFC5424(self, level, message):
-        facility='user'
-        priority = self.make_priority(facility, level)
+        priority = self.make_priority(self.syslog_facilities.user, level)
         timestamp = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S%z')
         if len(timestamp) > 19:  # Fix timezone format
             timestamp = timestamp[:-2] + ':' + timestamp[-2:]
         hostname = socket.gethostname()
-        syslog_msg = f"<{priority}>1 {timestamp} {hostname} {self.config['tag']} - - {message}"
+        syslog_msg = f"<{priority}>1 {timestamp} {hostname} {self.config.tag} - - {message}"
         
         self.syslog_socket.sendto(
             f'{syslog_msg}\n'.encode('utf-8'),
@@ -210,11 +331,10 @@ class CallbackModule(CallbackBase):
         )
 
     def _send_to_syslog_RFC3164(self, level, message):
-        facility='user'
-        priority = self.make_priority(facility, level)
+        priority = self.make_priority(self.syslog_facilities.user, level)
         timestamp = datetime.datetime.now().strftime('%b %d %H:%M:%S')
         hostname = socket.gethostname()
-        syslog_msg = f"<{priority}>{timestamp} {hostname} {self.config['tag']}: {message}"
+        syslog_msg = f"<{priority}>{timestamp} {hostname} {self.config.tag}: {message}"
         
         self.syslog_socket.sendto(
             f'{syslog_msg}\n'.encode('utf-8'),
@@ -227,99 +347,110 @@ class CallbackModule(CallbackBase):
         """Called when playbook execution starts"""
         self._playbook_name = os.path.basename(playbook._file_name)
         msg = f'{self._playbook_name} playbook status=started'
-        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+        level = self._get_log_level('playbook_start')
+        self._send_to_syslog(level, msg)
 
     def __del__(self):
-        """
-        Clean up socket connection
-        """
-        if self.syslog_socket:
+        """Clean up socket connection"""
+        if hasattr(self, 'syslog_socket') and self.syslog_socket:
             self.syslog_socket.close()
 
     def v2_runner_on_ok(self, result):
         """Called when a task succeeds"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=ok'
-        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+        self._log_runner_event(result, 'ok')
 
     def v2_runner_on_changed(self, result):
         """Called when a task makes changes"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=changed'
-        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+        self._log_runner_event(result, 'changed')
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         """Called when a task fails"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        error_msg = result._result.get('msg', 'Unknown error')
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=failed error="{error_msg}"'
-        level = self.syslog_levels.LOG_NOTICE if ignore_errors else self.syslog_levels.LOG_ERR
-        self._send_to_syslog(level, msg)
+        self._log_runner_event(result, 'failed', ignore_errors=ignore_errors)
 
     def v2_runner_on_unreachable(self, result):
         """Called when a host is unreachable"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        error_msg = result._result.get('msg', 'Host unreachable')
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=unreachable error="{error_msg}"'
-        self._send_to_syslog(self.syslog_levels.LOG_EMERG, msg)
+        self._log_runner_event(result, 'unreachable')
 
     def v2_runner_on_skipped(self, result):
         """Called when a task is skipped"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        reason = result._result.get('skip_reason', 'Condition not met')
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=skipped reason="{reason}"'
-        self._send_to_syslog(self.syslog_levels.LOG_NOTICE, msg)
+        self._log_runner_event(result, 'skipped')
 
     def v2_runner_retry(self, result):
         """Called when a task is retried"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        retry_count = result._result.get('retries', 0) + 1
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" status=retry attempt={retry_count}'
-        self._send_to_syslog(self.syslog_levels.LOG_WARNING, msg)
+        self._log_runner_event(result, 'retry')
 
     def v2_runner_item_on_ok(self, result):
         """Called when a task item succeeds (for loops)"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        item = result._result.get('item', 'N/A')
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" item="{item}" status=ok'
-        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+        item = result._result['item']
+        self._log_runner_event(result, 'ok', item=item)
 
     def v2_runner_item_on_failed(self, result):
         """Called when a task item fails (for loops)"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        item = result._result.get('item', 'N/A')
-        error_msg = result._result.get('msg', 'Unknown error')
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" item="{item}" status=failed error="{error_msg}"'
-        self._send_to_syslog(self.syslog_levels.LOG_ERR, msg)
+        item = result._result['item']
+        self._log_runner_event(result, 'failed', item=item)
 
     def v2_runner_item_on_skipped(self, result):
         """Called when a task item is skipped (for loops)"""
-        host = result._host.get_name()
-        task_name = result._task.get_name()
-        item = result._result.get('item', 'N/A')
-        reason = result._result.get('skip_reason', 'Condition not met')
-        msg = f'{self._playbook_name} target_host={host} task="{task_name}" item="{item}" status=skipped reason="{reason}"'
-        self._send_to_syslog(self.syslog_levels.LOG_NOTICE, msg)
+        item = result._result['item']
+        self._log_runner_event(result, 'skipped', item=item)
 
     def v2_playbook_on_play_start(self, play):
         """Called when a play starts"""
         play_name = play.get_name() or 'Unnamed play'
         msg = f'{self._playbook_name} play="{play_name}" status=started'
-        self._send_to_syslog(self.syslog_levels.LOG_INFO, msg)
+        level = self._get_log_level('play_start')
+        self._send_to_syslog(level, msg)
 
     def v2_playbook_on_task_start(self, task, is_conditional):
         """Called when a task starts"""
         task_name = task.get_name()
         msg = f'{self._playbook_name} task="{task_name}" status=started'
-        self._send_to_syslog(self.syslog_levels.LOG_DEBUG, msg)
+        level = self._get_log_level('task_start')
+        self._send_to_syslog(level, msg)
+
+    def _get_log_level(self, event_type):
+        """Get the configured log level for a specific event type"""
+        level_name = self.config[f'level_{event_type}']
+        return self.syslog_levels[level_name]
+
+    def _log_runner_event(self, result, event_type, item=None, ignore_errors=False):
+        """Generic function to log runner events"""
+        host = result._host.get_name()
+        task_name = result._task.get_name()
+        
+        # Build message components
+        msg_parts = [f'{self._playbook_name} target_host={host} task="{task_name}"']
+        
+        # Add item for loop events
+        if item is not None:
+            msg_parts.append(f'item="{item}"')
+            
+        msg_parts.append(f'status={event_type}')
+        
+        # Event-specific data mapping: (result_key, format_function)
+        event_data_mapping = {
+            'failed': ('msg', lambda value: f'error="{value}"'),
+            'unreachable': ('msg', lambda value: f'error="{value}"'),
+            'skipped': ('skip_reason', lambda value: f'reason="{value}"'),
+            'retry': ('retries', lambda value: f'attempt={value + 1}')
+        }
+        
+        # Add specific data based on event type
+        if event_type in event_data_mapping:
+            result_key, format_func = event_data_mapping[event_type]
+            value = result._result[result_key]
+            msg_parts.append(format_func(value))
+            
+        msg = ' '.join(msg_parts)
+        
+        # Determine log level
+        if event_type == 'failed' and ignore_errors:
+            level = self.syslog_levels.LOG_NOTICE
+        else:
+            level_key = f'item_{event_type}' if item is not None else event_type
+            level = self._get_log_level(level_key)
+            
+        self._send_to_syslog(level, msg)
 
 if __name__=='__main__':
     
