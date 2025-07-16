@@ -54,6 +54,12 @@ options:
     env:
       - name: ANSIBLE_SYSLOG_DEBUG
     type: bool
+  syslog_format:
+    description: Syslog message format (RFC3164 or RFC5424)
+    default: RFC3164
+    env:
+      - name: ANSIBLE_SYSLOG_FORMAT
+    type: str
   level_playbook_start:
     description: Log level for playbook start events
     default: LOG_INFO
@@ -254,7 +260,8 @@ class CallbackModule(CallbackBase):
             syslog_port=int(os.environ.get('ANSIBLE_SYSLOG_PORT', defaults.syslog_port)),
             syslog_facility=os.environ.get('ANSIBLE_SYSLOG_FACILITY', defaults.syslog_facility),
             tag=os.environ.get('ANSIBLE_SYSLOG_TAG', defaults.tag),
-            debug=os.environ.get('ANSIBLE_SYSLOG_DEBUG', '').lower() in ('true', '1', 'yes')
+            debug=os.environ.get('ANSIBLE_SYSLOG_DEBUG', '').lower() in ('true', '1', 'yes'),
+            syslog_format=os.environ.get('ANSIBLE_SYSLOG_FORMAT', 'RFC3164').upper()
         )
         
         # Load event-specific log levels using comprehension
@@ -329,7 +336,11 @@ class CallbackModule(CallbackBase):
             (self.config.syslog_host, self.config.syslog_port)
         )
     def _send_to_syslog(self, *args, **kwargs):
-        self._send_to_syslog_RFC3164(*args, **kwargs)
+        """Send message using configured syslog format"""
+        if self.config.syslog_format == 'RFC5424':
+            self._send_to_syslog_RFC5424(*args, **kwargs)
+        else:
+            self._send_to_syslog_RFC3164(*args, **kwargs)
 
     def v2_playbook_on_start(self, playbook):
         """Called when playbook execution starts"""
