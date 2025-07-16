@@ -17,19 +17,7 @@ callback_type: notification
 requirements:
     - enable in configuration
 short_description: Sends play events to syslog
-version_added: "2.0"  # for collections, use         # Event-specific data mapping: (result_key, format_function)
-        event_data_mapping = {
-            'failed': ('msg', lambda value: f'error="{value}"'),
-            'unreachable': ('msg', lambda value: f'error="{value}"'),
-            'skipped': ('skip_reason', lambda value: f'reason="{value}"'),
-            'retry': ('retries', lambda value: f'attempt={value + 1}')
-        }
-        
-        # Add specific data based on event type
-        if event_type in event_data_mapping:
-            result_key, format_func = event_data_mapping[event_type]
-            value = result._result[result_key]
-            msg_parts.append(format_func(value))n version, not the Ansible version
+version_added: "2.0"  # for collections, use the collection version, not the Ansible version
 description:
     - This callback plugin sends Ansible playbook execution results to a syslog server
     - Supports both RFC3164 and RFC5424 syslog message formats
